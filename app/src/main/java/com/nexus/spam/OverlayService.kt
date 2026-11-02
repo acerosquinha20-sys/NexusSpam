@@ -26,6 +26,7 @@ class OverlayService : Service() {
     private var statusTv: TextView? = null
     private var listBox: LinearLayout? = null
     private var banner: TextView? = null
+    private var pasteBtn: TextView? = null
     private var currentPkg = ""
     private var lastQuery = 0L
     private val tiktok = setOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill")
@@ -47,6 +48,7 @@ class OverlayService : Service() {
             .setContentTitle("Nexus Spam ativo").setSmallIcon(android.R.drawable.ic_menu_edit).build())
         buildFloat()
         buildBanner()
+        buildPasteBtn()
         handler.post(poll)
     }
 
@@ -56,6 +58,7 @@ class OverlayService : Service() {
         floatView?.let { runCatching { wm.removeView(it) } }
         panel?.let { runCatching { wm.removeView(it) } }
         banner?.let { runCatching { wm.removeView(it) } }
+        pasteBtn?.let { runCatching { wm.removeView(it) } }
         super.onDestroy()
     }
 
@@ -118,7 +121,7 @@ class OverlayService : Service() {
             setOnClickListener {
                 val t = input.text.toString().trim()
                 if (t.isNotEmpty()) {
-                    val l = loadList(); l.add(t); saveList(l); input.setText(""); renderList()
+                    val l = loadList(); l.add(t); saveList(l); prefs.edit().putString("active", t).apply(); input.setText(""); renderList()
                 }
             }
         }
@@ -129,10 +132,10 @@ class OverlayService : Service() {
         val row2 = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
         val paste = Ui.button(c, "Colar").apply {
             setOnClickListener {
-                val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-                val t = cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(c)?.toString()
-                if (t.isNullOrEmpty()) Toast.makeText(c, "Nada para colar", Toast.LENGTH_SHORT).show()
-                else input.append(t)
+                val t = input.text.toString().trim().ifEmpty { activeText() }
+                if (t.isNotEmpty()) prefs.edit().putString("active", t).apply()
+                togglePanel()
+                handler.postDelayed({ doPaste(t) }, 500)
             }
         }
         val openLive = Ui.button(c, "Abrir Live").apply { setOnClickListener { openTikTok() } }
@@ -178,6 +181,49 @@ class OverlayService : Service() {
         wm.addView(tv, lp)
     }
 
+    private fun activeText(): String = prefs.getString("active", null) ?: loadList().lastOrNull() ?: ""
+
+    /** Cola o texto no campo de digitação do TikTok (um toque = uma colagem). Você envia manualmente. */
+    private fun doPaste(t: String) {
+        val acc = NexusAccess.inst
+        when {
+            t.isEmpty() -> Toast.makeText(this, "Salve um texto primeiro", Toast.LENGTH_SHORT).show()
+            acc == null -> Toast.makeText(this, "Ative a acessibilidade do Nexus Spam", Toast.LENGTH_LONG).show()
+            !acc.pasteText(t) -> Toast.makeText(this, "Toque no campo de texto do chat primeiro", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Botão COLAR pequeno, sem foco (não fecha o teclado), visível só com o TikTok aberto
+    private fun buildPasteBtn() {
+        val tv = TextView(this).apply {
+            text = "COLAR"; textSize = 12f; setTypeface(null, Typeface.BOLD); setTextColor(Color.WHITE)
+            background = Ui.neon(context, 12, Color.parseColor("#B00000"), Color.parseColor("#2A0000"))
+            setPadding(Ui.dp(context, 12), Ui.dp(context, 8), Ui.dp(context, 12), Ui.dp(context, 8))
+            visibility = View.GONE
+        }
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START
+            x = resources.displayMetrics.widthPixels - Ui.dp(this@OverlayService, 90); y = Ui.dp(this@OverlayService, 200) }
+        var sx = 0; var sy = 0; var tx = 0f; var ty = 0f; var moved = false
+        tv.setOnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> { sx = lp.x; sy = lp.y; tx = e.rawX; ty = e.rawY; moved = false }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (e.rawX - tx).toInt(); val dy = (e.rawY - ty).toInt()
+                    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) moved = true
+                    if (moved) { lp.x = sx + dx; lp.y = sy + dy; wm.updateViewLayout(tv, lp) }
+                }
+                MotionEvent.ACTION_UP -> if (!moved) doPaste(activeText())
+            }
+            true
+        }
+        pasteBtn = tv
+        wm.addView(tv, lp)
+    }
+
     private fun loadList(): MutableList<String> =
         (prefs.getString("items", "") ?: "").split("\u0001").filter { it.isNotEmpty() }.toMutableList()
     private fun saveList(l: List<String>) = prefs.edit().putString("items", l.joinToString("\u0001")).apply()
@@ -187,7 +233,8 @@ class OverlayService : Service() {
         box.removeAllViews()
         loadList().forEachIndexed { idx, t ->
             val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-            r.addView(TextView(this).apply { text = t; setTextColor(Color.WHITE); maxLines = 2 }, LinearLayout.LayoutParams(0, -2, 1f))
+            r.addView(TextView(this).apply { text = t; setTextColor(Color.WHITE); maxLines = 2
+                setOnClickListener { prefs.edit().putString("active", t).apply(); Toast.makeText(context, "Selecionado para colar", Toast.LENGTH_SHORT).show() } }, LinearLayout.LayoutParams(0, -2, 1f))
             r.addView(Ui.button(this, "Copiar").apply {
                 textSize = 11f
                 setOnClickListener {
@@ -226,6 +273,7 @@ class OverlayService : Service() {
         val color = if (on) Color.parseColor("#00E676") else Color.GRAY
         (dot?.background as? GradientDrawable)?.setColor(color)
         banner?.visibility = if (on) View.VISIBLE else View.GONE
+        pasteBtn?.visibility = if (on) View.VISIBLE else View.GONE
         statusTv?.apply {
             text = when { noPerm -> "Permita o acesso de uso no app"; on -> "TikTok detectado ✔"; else -> "TikTok não detectado" }
             setTextColor(if (noPerm) Ui.RED else color)

@@ -39,6 +39,9 @@ class MainActivity : Activity() {
         add(Ui.button(this, "2. Permitir acesso de uso (detectar TikTok)")) {
             startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
         }
+        add(Ui.button(this, "3. Ativar acessibilidade (colar no chat)")) {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
         toggle = Ui.button(this, "ATIVAR FLUTUANTE")
         add(toggle) {
             if (!Settings.canDrawOverlays(this)) {

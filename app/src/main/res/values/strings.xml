@@ -1,1 +1,4 @@
-<resources><string name="app_name">Nexus Spam</string></resources>
+<resources>
+    <string name="app_name">Nexus Spam</string>
+    <string name="acc_desc">Permite colar o texto salvo no campo de digitação do TikTok quando você toca em Colar. Não envia mensagens.</string>
+</resources>
