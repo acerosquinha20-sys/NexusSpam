@@ -25,6 +25,7 @@ class OverlayService : Service() {
     private var panel: LinearLayout? = null
     private var statusTv: TextView? = null
     private var listBox: LinearLayout? = null
+    private var banner: TextView? = null
     private var currentPkg = ""
     private var lastQuery = 0L
     private val tiktok = setOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill")
@@ -45,6 +46,7 @@ class OverlayService : Service() {
         startForeground(1, Notification.Builder(this, "nx")
             .setContentTitle("Nexus Spam ativo").setSmallIcon(android.R.drawable.ic_menu_edit).build())
         buildFloat()
+        buildBanner()
         handler.post(poll)
     }
 
@@ -53,6 +55,7 @@ class OverlayService : Service() {
         handler.removeCallbacksAndMessages(null)
         floatView?.let { runCatching { wm.removeView(it) } }
         panel?.let { runCatching { wm.removeView(it) } }
+        banner?.let { runCatching { wm.removeView(it) } }
         super.onDestroy()
     }
 
@@ -64,14 +67,14 @@ class OverlayService : Service() {
 
     // ---------- Botão flutuante (imagem da coroa) ----------
     private fun buildFloat() {
-        val size = Ui.dp(this, 64)
+        val size = Ui.dp(this, 44)
         val lp = params(size, size, false).apply { gravity = Gravity.TOP or Gravity.START; x = 20; y = 300 }
         val fl = FrameLayout(this)
         val img = ImageView(this).apply { setImageResource(R.drawable.ic_float) }
         fl.addView(img, FrameLayout.LayoutParams(size, size))
         val d = View(this).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.GRAY); setStroke(2, Color.BLACK) } }
         dot = d
-        fl.addView(d, FrameLayout.LayoutParams(Ui.dp(this, 16), Ui.dp(this, 16), Gravity.TOP or Gravity.END))
+        fl.addView(d, FrameLayout.LayoutParams(Ui.dp(this, 12), Ui.dp(this, 12), Gravity.TOP or Gravity.END))
 
         var sx = 0; var sy = 0; var tx = 0f; var ty = 0f; var moved = false
         fl.setOnTouchListener { _, e ->
@@ -123,6 +126,19 @@ class OverlayService : Service() {
         row.addView(save, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(0, 12, 6, 12) })
         row.addView(close, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(6, 12, 0, 12) })
         box.addView(row)
+        val row2 = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
+        val paste = Ui.button(c, "Colar").apply {
+            setOnClickListener {
+                val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                val t = cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(c)?.toString()
+                if (t.isNullOrEmpty()) Toast.makeText(c, "Nada para colar", Toast.LENGTH_SHORT).show()
+                else input.append(t)
+            }
+        }
+        val openLive = Ui.button(c, "Abrir Live").apply { setOnClickListener { openTikTok() } }
+        row2.addView(paste, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(0, 0, 6, 12) })
+        row2.addView(openLive, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(6, 0, 0, 12) })
+        box.addView(row2)
         val sv = ScrollView(c)
         listBox = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
         sv.addView(listBox)
@@ -133,6 +149,33 @@ class OverlayService : Service() {
             gravity = Gravity.CENTER; softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
         }
         wm.addView(box, lp)
+    }
+
+    private fun openTikTok() {
+        val i = tiktok.firstNotNullOfOrNull { packageManager.getLaunchIntentForPackage(it) }
+        if (i == null) { Toast.makeText(this, "TikTok não instalado", Toast.LENGTH_SHORT).show(); return }
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(i)
+        panel?.let { runCatching { wm.removeView(it) } }; panel = null
+    }
+
+    // ---------- Overlay extra: faixa verde no topo quando o TikTok está aberto ----------
+    private fun buildBanner() {
+        val tv = TextView(this).apply {
+            text = "● NEXUS • TIKTOK ATIVO"; textSize = 11f; setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.BLACK)
+            background = GradientDrawable().apply { cornerRadius = Ui.dp(context, 12).toFloat(); setColor(Color.parseColor("#E600E676")) }
+            setPadding(Ui.dp(context, 12), Ui.dp(context, 4), Ui.dp(context, 12), Ui.dp(context, 4))
+            visibility = View.GONE
+        }
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = Ui.dp(this@OverlayService, 28) }
+        banner = tv
+        wm.addView(tv, lp)
     }
 
     private fun loadList(): MutableList<String> =
@@ -182,6 +225,7 @@ class OverlayService : Service() {
         val on = currentPkg in tiktok
         val color = if (on) Color.parseColor("#00E676") else Color.GRAY
         (dot?.background as? GradientDrawable)?.setColor(color)
+        banner?.visibility = if (on) View.VISIBLE else View.GONE
         statusTv?.apply {
             text = when { noPerm -> "Permita o acesso de uso no app"; on -> "TikTok detectado ✔"; else -> "TikTok não detectado" }
             setTextColor(if (noPerm) Ui.RED else color)
