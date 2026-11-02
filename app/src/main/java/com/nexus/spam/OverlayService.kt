@@ -27,6 +27,7 @@ class OverlayService : Service() {
     private var listBox: LinearLayout? = null
     private var banner: TextView? = null
     private var pasteBtn: TextView? = null
+    private var ply3Btn: TextView? = null
     private var currentPkg = ""
     private var lastQuery = 0L
     private val tiktok = setOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill")
@@ -49,6 +50,7 @@ class OverlayService : Service() {
         buildFloat()
         buildBanner()
         buildPasteBtn()
+        buildPly3Btn()
         handler.post(poll)
     }
 
@@ -59,6 +61,7 @@ class OverlayService : Service() {
         panel?.let { runCatching { wm.removeView(it) } }
         banner?.let { runCatching { wm.removeView(it) } }
         pasteBtn?.let { runCatching { wm.removeView(it) } }
+        ply3Btn?.let { runCatching { wm.removeView(it) } }
         super.onDestroy()
     }
 
@@ -224,6 +227,52 @@ class OverlayService : Service() {
         wm.addView(tv, lp)
     }
 
+
+    /** ply3 — a cada toque: abre o chat, cola o texto salvo e envia (1 mensagem por toque). */
+    private fun doPly3() {
+        val t = activeText()
+        val acc = NexusAccess.inst
+        when {
+            t.isEmpty() -> Toast.makeText(this, "Salve um texto primeiro", Toast.LENGTH_SHORT).show()
+            acc == null -> Toast.makeText(this, "Ative a acessibilidade do Nexus Spam", Toast.LENGTH_LONG).show()
+            else -> acc.pasteAndSend(t) { ok ->
+                if (!ok) Toast.makeText(this, "ply3: não achei o chat/enviar. Abra a live e tente de novo", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // Botão flutuante ply3, arrastável, visível só com o TikTok aberto
+    private fun buildPly3Btn() {
+        val tv = TextView(this).apply {
+            text = "ply3"; textSize = 13f; setTypeface(null, Typeface.BOLD); setTextColor(Color.WHITE)
+            setShadowLayer(8f, 0f, 0f, Ui.RED); gravity = Gravity.CENTER
+            background = Ui.neon(context, 14, Color.parseColor("#B00000"), Color.parseColor("#2A0000"))
+            setPadding(Ui.dp(context, 14), Ui.dp(context, 10), Ui.dp(context, 14), Ui.dp(context, 10))
+            visibility = View.GONE
+        }
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START
+            x = resources.displayMetrics.widthPixels - Ui.dp(this@OverlayService, 90); y = Ui.dp(this@OverlayService, 270) }
+        var sx = 0; var sy = 0; var tx = 0f; var ty = 0f; var moved = false
+        tv.setOnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> { sx = lp.x; sy = lp.y; tx = e.rawX; ty = e.rawY; moved = false }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (e.rawX - tx).toInt(); val dy = (e.rawY - ty).toInt()
+                    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) moved = true
+                    if (moved) { lp.x = sx + dx; lp.y = sy + dy; wm.updateViewLayout(tv, lp) }
+                }
+                MotionEvent.ACTION_UP -> if (!moved) doPly3()
+            }
+            true
+        }
+        ply3Btn = tv
+        wm.addView(tv, lp)
+    }
+
     private fun loadList(): MutableList<String> =
         (prefs.getString("items", "") ?: "").split("\u0001").filter { it.isNotEmpty() }.toMutableList()
     private fun saveList(l: List<String>) = prefs.edit().putString("items", l.joinToString("\u0001")).apply()
@@ -274,6 +323,7 @@ class OverlayService : Service() {
         (dot?.background as? GradientDrawable)?.setColor(color)
         banner?.visibility = if (on) View.VISIBLE else View.GONE
         pasteBtn?.visibility = if (on) View.VISIBLE else View.GONE
+        ply3Btn?.visibility = if (on) View.VISIBLE else View.GONE
         statusTv?.apply {
             text = when { noPerm -> "Permita o acesso de uso no app"; on -> "TikTok detectado ✔"; else -> "TikTok não detectado" }
             setTextColor(if (noPerm) Ui.RED else color)

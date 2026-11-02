@@ -3,11 +3,14 @@ package com.nexus.spam
 import android.accessibilityservice.AccessibilityService
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
-/** Só cola o texto no campo de digitação focado do TikTok, uma vez por toque. Não envia nada. */
+/** Cola o texto no chat do TikTok. O ply3 também abre o chat e envia — uma mensagem por toque. */
 class NexusAccess : AccessibilityService() {
     companion object { @Volatile var inst: NexusAccess? = null }
 
@@ -23,6 +26,83 @@ class NexusAccess : AccessibilityService() {
             if (n != null && n.isEditable) return n
         }
         return null
+    }
+
+
+    private val ui = Handler(Looper.getMainLooper())
+    @Volatile private var busy = false
+
+    private val chatHints = listOf("diga algo", "adicionar comentário", "comentar", "say something", "add comment", "comment", "chat")
+    private val sendHints = listOf("enviar", "send", "publicar", "post")
+
+    private fun roots(): List<AccessibilityNodeInfo> {
+        val l = mutableListOf<AccessibilityNodeInfo>()
+        rootInActiveWindow?.let { l.add(it) }
+        for (w in windows) w.root?.let { l.add(it) }
+        return l
+    }
+
+    private fun walk(n: AccessibilityNodeInfo?, pred: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        if (n == null) return null
+        if (pred(n)) return n
+        for (i in 0 until n.childCount) walk(n.getChild(i), pred)?.let { return it }
+        return null
+    }
+
+    private fun label(n: AccessibilityNodeInfo) =
+        ((n.text?.toString() ?: "") + " " + (n.contentDescription?.toString() ?: "") + " " + (n.hintText?.toString() ?: "")).lowercase()
+
+    private fun clickNode(n: AccessibilityNodeInfo): Boolean {
+        var c: AccessibilityNodeInfo? = n
+        while (c != null) {
+            if (c.isClickable && c.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+            c = c.parent
+        }
+        return false
+    }
+
+    /** ply3: abre o chat (se fechado), cola o texto salvo e envia. Retorna false se não achou o chat. */
+    fun pasteAndSend(text: String, done: (Boolean) -> Unit) {
+        if (busy) { done(true); return }
+        busy = true
+        fun finish(ok: Boolean) { busy = false; done(ok) }
+
+        fun sendStep() {
+            // 1) botão de enviar
+            var btn: AccessibilityNodeInfo? = null
+            for (r in roots()) {
+                btn = walk(r) { n -> n.isVisibleToUser && (n.isClickable || n.parent?.isClickable == true) &&
+                    (n.viewIdResourceName?.lowercase()?.contains("send") == true ||
+                     sendHints.any { h -> label(n).trim() == h || label(n).trim().startsWith("$h ") }) }
+                if (btn != null) break
+            }
+            val sent = btn?.let { clickNode(it) } ?: false
+            if (sent) { finish(true); return }
+            // 2) fallback: Enter do teclado (Android 11+)
+            val inp = findInput()
+            if (inp != null && Build.VERSION.SDK_INT >= 30 &&
+                inp.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)) { finish(true); return }
+            finish(false)
+        }
+
+        fun pasteStep() {
+            if (!pasteText(text)) { finish(false); return }
+            ui.postDelayed({ sendStep() }, 350)
+        }
+
+        if (findInput() != null) { pasteStep(); return }
+        // chat fechado: tenta abrir tocando na caixa "Diga algo..."
+        var opener: AccessibilityNodeInfo? = null
+        for (r in roots()) {
+            opener = walk(r) { n -> n.isVisibleToUser && (n.isEditable || chatHints.any { h -> label(n).contains(h) }) }
+            if (opener != null) break
+        }
+        if (opener == null) { finish(false); return }
+        opener.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        clickNode(opener)
+        ui.postDelayed({
+            if (findInput() != null) pasteStep() else finish(false)
+        }, 600)
     }
 
     fun pasteText(text: String): Boolean {
